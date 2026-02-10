@@ -2,77 +2,79 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Cloud Chrome v4</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Stealth Browser v5</title>
     <style>
-        :root { --bg: #1a1a1b; --nav: #2d2d2e; --accent: #3d8aff; }
-        body, html { margin: 0; padding: 0; height: 100%; background: var(--bg); font-family: sans-serif; overflow: hidden; }
+        :root { --bg-dark: #121212; --accent: #0084ff; }
+        body, html { margin: 0; padding: 0; height: 100%; background: var(--bg-dark); font-family: sans-serif; overflow: hidden; }
         
-        .container { display: flex; flex-direction: column; height: 100%; }
+        .main-layout { display: flex; flex-direction: column; height: 100%; }
         
         /* ツールバー */
-        .toolbar { background: #fff; padding: 10px 15px; display: flex; align-items: center; gap: 15px; border-bottom: 1px solid #ddd; z-index: 10; }
-        .address-bar { flex-grow: 1; background: #f1f3f4; border: none; border-radius: 20px; padding: 10px 20px; outline: none; transition: 0.2s; }
-        .address-bar:focus { background: #fff; box-shadow: 0 0 0 2px var(--accent); }
+        .nav-toolbar { background: #ffffff; padding: 10px 15px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #ddd; z-index: 10; }
+        .url-bar { flex-grow: 1; background: #f0f2f5; border: 1px solid #ddd; border-radius: 20px; padding: 10px 20px; font-size: 14px; outline: none; }
+        .url-bar:focus { background: #fff; border-color: var(--accent); }
+        .go-btn { background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-weight: bold; }
 
-        /* ビューポート */
-        .viewport { flex-grow: 1; position: relative; background: #fff; }
-        iframe { width: 100%; height: 100%; border: none; opacity: 0; transition: opacity 0.6s ease; }
-        iframe.ready { opacity: 1; }
+        /* コンテンツ領域 */
+        .viewer { flex-grow: 1; position: relative; background: #fff; }
+        iframe { width: 100%; height: 100%; border: none; position: absolute; opacity: 0; transition: opacity 0.5s; }
+        iframe.loaded { opacity: 1; }
 
-        /* ローディングバー */
-        .loader { position: absolute; top: 0; left: 0; width: 100%; height: 3px; z-index: 20; }
-        .progress { width: 0%; height: 100%; background: var(--accent); transition: width 0.4s; }
+        /* ロードゲージ */
+        .load-line { position: absolute; top: 0; left: 0; width: 0%; height: 3px; background: var(--accent); z-index: 100; transition: width 0.3s; }
 
-        .home-overlay { position: absolute; inset: 0; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 5; }
+        .splash { position: absolute; inset: 0; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 5; text-align: center; }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <div class="loader"><div id="pBar" class="progress"></div></div>
+<div class="main-layout">
+    <div id="loader" class="load-line"></div>
     
-    <div class="toolbar">
-        <button onclick="nav('back')" style="background:none; border:none; cursor:pointer; font-size:18px;">←</button>
-        <input type="text" id="urlInput" class="address-bar" placeholder="URLを入力 (例: youtube.com)" onkeydown="if(event.key==='Enter') load()">
-        <button onclick="load()" style="background:var(--accent); color:white; border:none; padding:8px 18px; border-radius:15px; cursor:pointer;">Go</button>
+    <div class="nav-toolbar">
+        <button onclick="history.back()" style="background:none; border:none; cursor:pointer; font-size:18px;">←</button>
+        <input type="text" id="targetUrl" class="url-bar" placeholder="URLを入力 (google.com など)" onkeydown="if(event.key==='Enter') executeLoad()">
+        <button class="go-btn" onclick="executeLoad()">GO</button>
     </div>
 
-    <div class="viewport">
-        <div id="home" class="home-overlay">
-            <h2 style="color:var(--accent)">Elite Stealth Browser</h2>
-            <p>Ready to Bypass Filter</p>
+    <div class="viewer">
+        <div id="splash" class="splash">
+            <h2 style="color:var(--accent)">Stealth Browser Ready</h2>
+            <p style="color:#666">URLを入力してスタートしてください</p>
         </div>
-        <iframe id="mainView" onload="onLoaded()"></iframe>
+        <iframe id="browserIframe" onload="onFrameComplete()"></iframe>
     </div>
 </div>
 
 <script>
-    function load() {
-        let url = document.getElementById('urlInput').value;
-        if (!url) return;
-        if (!url.startsWith('http')) url = 'https://' + url;
+    function executeLoad() {
+        let inputUrl = document.getElementById('targetUrl').value;
+        if (!inputUrl) return;
 
-        document.getElementById('home').style.display = 'none';
-        document.getElementById('pBar').style.width = '70%';
-        const ifr = document.getElementById('mainView');
-        ifr.classList.remove('ready');
+        // URLプロトコルの補完
+        if (!inputUrl.startsWith('http')) {
+            inputUrl = 'https://' + inputUrl;
+        }
 
-        // URLをBase64化して "/lib/js/common.bin?v=" に投げる
-        const encoded = btoa(unescape(encodeURIComponent(url)));
-        ifr.src = '/lib/js/common.bin?v=' + encoded;
+        // UI初期化
+        document.getElementById('splash').style.display = 'none';
+        document.getElementById('loader').style.width = '60%';
+        const ifr = document.getElementById('browserIframe');
+        ifr.classList.remove('loaded');
+
+        // URLをBase64化し、バックエンドの "/lib/js/common.bin?v=" に送信
+        // 404を避けるため、バックエンドの定義と一文字残らず一致させています
+        const base64Url = btoa(unescape(encodeURIComponent(inputUrl)));
+        ifr.src = '/lib/js/common.bin?v=' + base64Url;
     }
 
-    function onLoaded() {
-        document.getElementById('pBar').style.width = '100%';
+    function onFrameComplete() {
+        document.getElementById('loader').style.width = '100%';
         setTimeout(() => {
-            document.getElementById('pBar').style.width = '0%';
-            document.getElementById('mainView').classList.add('ready');
+            document.getElementById('loader').style.width = '0%';
+            document.getElementById('browserIframe').classList.add('loaded');
         }, 300);
-    }
-
-    function nav(type) {
-        const ifr = document.getElementById('mainView');
-        if(type === 'back') ifr.contentWindow.history.back();
     }
 </script>
 
