@@ -10,80 +10,71 @@ from urllib.parse import urljoin
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# 規制回避のために削除・変更するヘッダー
-UNWANTED_HEADERS = [
+# ISGCに検閲されるヘッダーを徹底的に削除
+STRIP_HEADERS = [
     "content-security-policy", "x-frame-options", "x-content-type-options",
-    "x-xss-protection", "content-encoding"
+    "x-xss-protection", "strict-transport-security", "content-encoding"
 ]
-
-# 広告ブロック対象キーワード
-AD_KEYWORDS = ["googleads", "doubleclick", "adservice", "analytics", "adsbygoogle", "adnxs"]
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-@app.get("/proxy")
-async def proxy(request: Request, b64url: str = Query(...)):
+@app.get("/api/v1/assets")
+async def proxy_engine(request: Request, d: str = Query(...)):
     try:
-        # URLを難読化解除
-        url = base64.b64decode(b64url).decode('utf-8')
+        # Base64デコード
+        target_url = base64.b64decode(d).decode('utf-8')
     except Exception:
-        return Response("URL Decode Error", status_code=400)
+        return Response(status_code=400)
 
     try:
+        # タイムアウトを30秒に延長し、検証をスキップ
         async with httpx.AsyncClient(follow_redirects=True, verify=False, timeout=30.0) as client:
-            # ターゲットへは「普通のアクセス」を装う
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                "Accept": "*/*",
                 "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-                "Referer": url
+                "Connection": "keep-alive"
             }
-            
-            response = await client.get(url, headers=headers)
-            content_type = response.headers.get("Content-Type", "")
+            resp = await client.get(target_url, headers=headers)
+            ctype = resp.headers.get("Content-Type", "")
 
-            # HTMLコンテンツの高度な書き換え
-            if "text/html" in content_type:
-                soup = BeautifulSoup(response.text, "html.parser")
+            if "text/html" in ctype:
+                soup = BeautifulSoup(resp.text, "html.parser")
                 
-                # Baseタグを最優先で挿入
-                base_tag = soup.new_tag('base', href=url)
-                if soup.head:
-                    soup.head.insert(0, base_tag)
+                # Baseタグを挿入して相対パスの解決をブラウザに任せない（サーバーで制御）
+                base_tag = soup.new_tag('base', href=target_url)
+                if soup.head: soup.head.insert(0, base_tag)
 
-                # 全てのリソースパスをプロキシURL（Base64）に置換
-                for tag, attr in [('a', 'href'), ('img', 'src'), ('link', 'href'), ('script', 'src'), ('form', 'action'), ('source', 'src')]:
+                # すべてのリソースを難読化プロキシ経由に書き換え
+                for tag, attr in [('a', 'href'), ('img', 'src'), ('link', 'href'), ('script', 'src'), ('form', 'action')]:
                     for el in soup.find_all(tag):
                         if el.has_attr(attr):
-                            orig = el[attr]
-                            if not orig.startswith(('javascript:', 'data:', '#')):
-                                full_url = urljoin(url, orig)
-                                encoded = base64.b64encode(full_url.encode()).decode()
-                                el[attr] = f"/proxy?b64url={encoded}"
+                            val = el[attr]
+                            if not val.startswith(('javascript:', 'data:', '#')):
+                                full = urljoin(target_url, val)
+                                enc = base64.b64encode(full.encode()).decode()
+                                el[attr] = f"/api/v1/assets?d={enc}"
 
-                # 広告要素の除去
-                for ad in soup.find_all(['script', 'iframe', 'ins']):
-                    src = ad.get('src', '') or ad.get('href', '')
-                    if any(kw in src for kw in AD_KEYWORDS):
-                        ad.decompose()
+                # 広告削除
+                for ad in soup.select('script[src*="ads"], iframe[src*="ads"], ins.adsbygoogle'):
+                    ad.decompose()
 
                 content = str(soup)
             else:
-                # 画像やJS、CSSはそのままバイナリで返す
-                content = response.content
+                # 画像などはそのまま返す
+                content = resp.content
 
-            # レスポンスの構築（セキュリティヘッダーを剥がす）
-            proxy_res = Response(content=content, media_type=content_type)
-            for k, v in response.headers.items():
-                if k.lower() not in UNWANTED_HEADERS:
-                    proxy_res.headers[k] = v
+            # ISGCの制限を上書き
+            final_res = Response(content=content, media_type=ctype)
+            for k, v in resp.headers.items():
+                if k.lower() not in STRIP_HEADERS:
+                    final_res.headers[k] = v
             
-            # iframe内での動作を強制許可
-            proxy_res.headers["Access-Control-Allow-Origin"] = "*"
-            proxy_res.headers["X-Frame-Options"] = "ALLOWALL"
-            
-            return proxy_res
+            final_res.headers["X-Frame-Options"] = "ALLOWALL"
+            final_res.headers["Access-Control-Allow-Origin"] = "*"
+            return final_res
 
     except Exception as e:
-        return HTMLResponse(content=f"<div style='color:white;background:#222;padding:20px;'>Connection Error: {e}</div>", status_code=500)
+        return HTMLResponse(content=f"Connect Error: {str(e)}", status_code=500)
