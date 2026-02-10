@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Cloud Chrome Proxy</title>
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: 'Segoe UI', sans-serif; overflow: hidden; background: #35363a; }
+        
+        /* タブバー */
+        .tab-bar { display: flex; background: #202124; padding: 8px 10px 0 10px; align-items: flex-end; }
+        .tab { background: #35363a; color: white; padding: 8px 15px; border-radius: 8px 8px 0 0; margin-right: 5px; cursor: pointer; font-size: 12px; display: flex; align-items: center; min-width: 120px; max-width: 200px; }
+        .tab.active { background: #35363a; border-bottom: none; }
+        .tab .close-btn { margin-left: auto; font-size: 14px; opacity: 0.6; }
+        .new-tab { color: white; padding: 5px 10px; cursor: pointer; margin-bottom: 5px; }
+
+        /* ナビゲーションバー */
+        .nav-bar { background: #35363a; padding: 8px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #444; }
+        .nav-bar button { background: none; border: none; color: white; font-size: 18px; cursor: pointer; padding: 5px; }
+        .address-bar { flex-grow: 1; background: #202124; border-radius: 20px; padding: 5px 15px; color: white; border: none; outline: none; font-size: 14px; }
+
+        /* コンテンツエリア */
+        #content-container { height: calc(100vh - 85px); background: white; }
+        iframe { width: 100%; height: 100%; border: none; display: none; }
+        iframe.active { display: block; }
+
+        /* ホーム画面用スタイル */
+        .home-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; background: #35363a; color: white; }
+    </style>
+</head>
+<body>
+
+<div class="tab-bar" id="tab-bar">
+    <div class="new-tab" onclick="createNewTab()">＋</div>
+</div>
+
+<div class="nav-bar">
+    <button onclick="goBack()">←</button>
+    <button onclick="goForward()">→</button>
+    <button onclick="reload()">↻</button>
+    <input type="text" id="url-input" class="address-bar" placeholder="検索またはURLを入力" onkeydown="handleEnter(event)">
+</div>
+
+<div id="content-container">
+    </div>
+
+<script>
+    let tabs = [];
+    let activeTabId = null;
+
+    function createNewTab() {
+        const id = 'tab-' + Date.now();
+        const tabEl = document.createElement('div');
+        tabEl.className = 'tab';
+        tabEl.id = 'label-' + id;
+        tabEl.innerHTML = `<span>新しいタブ</span><span class="close-btn" onclick="closeTab('${id}', event)">×</span>`;
+        tabEl.onclick = () => switchTab(id);
+        
+        document.getElementById('tab-bar').insertBefore(tabEl, document.querySelector('.new-tab'));
+
+        const iframe = document.createElement('iframe');
+        iframe.id = id;
+        document.getElementById('content-container').appendChild(iframe);
+
+        tabs.push(id);
+        switchTab(id);
+        document.getElementById('url-input').value = "";
+    }
+
+    function switchTab(id) {
+        activeTabId = id;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('iframe').forEach(f => f.classList.remove('active'));
+        
+        document.getElementById('label-' + id).classList.add('active');
+        document.getElementById(id).classList.add('active');
+        
+        const currentUrl = document.getElementById(id).src.split('url=')[1] || "";
+        document.getElementById('url-input').value = decodeURIComponent(currentUrl);
+    }
+
+    function closeTab(id, event) {
+        event.stopPropagation();
+        document.getElementById(id).remove();
+        document.getElementById('label-' + id).remove();
+        tabs = tabs.filter(t => t !== id);
+        if (activeTabId === id && tabs.length > 0) switchTab(tabs[tabs.length - 1]);
+    }
+
+    function handleEnter(e) {
+        if (e.key === 'Enter') {
+            let url = document.getElementById('url-input').value;
+            if (!url.startsWith('http')) url = 'https://' + url;
+            const proxyUrl = `/proxy?url=${encodeURIComponent(url)}`;
+            
+            const activeIframe = document.getElementById(activeTabId);
+            activeIframe.src = proxyUrl;
+            document.getElementById('label-' + activeTabId).querySelector('span').innerText = url.substring(0, 15) + '...';
+        }
+    }
+
+    function goBack() { document.getElementById(activeTabId).contentWindow.history.back(); }
+    function goForward() { document.getElementById(activeTabId).contentWindow.history.forward(); }
+    function reload() { document.getElementById(activeTabId).contentWindow.location.reload(); }
+
+    // 初期タブ
+    createNewTab();
+</script>
+
+</body>
+</html>
